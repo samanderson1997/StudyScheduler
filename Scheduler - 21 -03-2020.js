@@ -1,7 +1,10 @@
 /**
   Changes since last Git upload:
- - Completed the countdown sidebar cell, taking the next three deadlines from the current date and displaying how long til then
- - (Almost) Completed work on the filters sideBar cell, which shows and hides events based on their module code.
+ - Completed the calendar filters section- used "white" for invisible; and added a clone of the original assignments
+ array to restore colours; to simulate showing/hiding and to avoid mutable side-effects of the assignments array.
+
+ - Migrated the populateEventNotes function which uses jQuery to retrieve the custom data set by the scheduling process.
+ Also extended to include a timestamp for the event
  */
 
 /**********************************************************************************************************************/
@@ -129,7 +132,7 @@ function testScheduler() {
     m6={ moduleCode: "CI316",
     moduleName: "Software Validation",
     quota: 100,
-      color: "Gray",
+      color: "Blue",
       dueDate: "2020-05-31"
     }
     ]; // A large block of stuff to plan to test the refactorStudy assignment();
@@ -143,34 +146,36 @@ function testScheduler() {
 /**********************************************************************************************************************/
 
 // Populate sidebar filters- takes unaltered assignments as a param meaning it needs to be called in the proper sequence in order to work properly
-// TODO: Find a way to hide events without killing them
 function populateFilters(assignments) {
   var subjects = []; // Needed to correspond to events
-  var codes = [];
-  // Get the codes of each module
+
+  // Get the names of each module for display labels
   assignments.forEach(function(assignment) {
     let subject = assignment.moduleName.substring(0, 24) + "...";
-    let code = assignment.moduleCode;
-    subjects.push(subject); codes.push(code);
+    subjects.push(subject);
   });
 
   // Populate the boxes
   for(let i=0; i<assignments.length; i++) {
     let temp_ID = assignments[i].moduleCode + assignments[i].moduleName.substring(0,1); // Create a temporary unique identifier
+    let tempColor = assignments[i].color;
 
     // Create the checkbox
     let checkbox = document.createElement("input");
     checkbox.type = "checkbox";
-    checkbox.name = "cb_"+assignments[i].moduleCode+assignments[i].moduleName.substring(0,1);
-    checkbox.value = assignments[i].moduleCode;
+    checkbox.name = "cb_"+temp_ID;
+    checkbox.value = temp_ID;
     checkbox.id = temp_ID;
     checkbox.checked = true;
 
+    // Add the associated listener to each box
     checkbox.addEventListener("change", function() {
-      if(this.checked) {
-        showStudySessionGroup(checkbox.value, 1);
+      if(checkbox.checked) {
+        showStudySessionGroup(checkbox.value, 1, assignments);
+        checkbox.checked = true;
       } else {
-        showStudySessionGroup(checkbox.value, -1);
+        showStudySessionGroup(checkbox.value, -1, assignments);
+        checkbox.checked = false;
       }
     });
 
@@ -188,10 +193,7 @@ function populateFilters(assignments) {
     // Get the calendar filters
     var calendarFilters = document.getElementById("calendar_filters");
     calendarFilters.appendChild(comb);
-
   }
-
-
 }
 
 // Get the next deadline and make a countdown to it in the bottom corner
@@ -228,6 +230,24 @@ function populateCountdown(assignments) {
 
 }
 
+// Populate the footer with the event notes from the event clicked.
+function populateEventNotes() {
+  // jQuery event listener for when an event is clicked.
+  $('.dhx_cal_event').on('click', function() {
+    scheduler.attachEvent("onClick", function(id,ev){
+      let event = scheduler.getEvent(id);
+      // On click of an event e
+      function populateFooter(e) {
+        let eventNotes = document.getElementById("event_notes");
+        let date = e.created;
+        $(eventNotes).text(e.notes);
+        $(eventNotes).append('<br>Created on ' + date + '</br>');
+      }
+      populateFooter(event);
+    });
+  });
+}
+
 /**********************************************************************************************************************/
 /********************************************* MAJOR FUNCTIONALITY ****************************************************/
 /**********************************************************************************************************************/
@@ -235,9 +255,16 @@ function populateCountdown(assignments) {
 /* ASSEMBLY OF SCHEDULER PARTS *****************************************************/
 // Main functionality for scheduling with a given plan and list of assignments
 function work_planner(assignments, scheduledPlan) {
+  // Create a carbon copy
+  var cbc = [];
+  assignments.forEach(function(e) {
+    let cci = Object.assign({}, e);
+    cbc.push(cci);
+  });
+
   // Populate the on-screen content for the sidebar
-  const cca = assignments;
-  populateCountdown(cca);
+  //var cca = Object.assign({}, assignments); // Create an immutable clone
+  populateCountdown(cbc);
 
   // Get the daily work slot, should be 6 or 8 hrs.
   var cap = getHourDifference(scheduledPlan.startTime, scheduledPlan.endTime, currentDate);
@@ -254,15 +281,15 @@ function work_planner(assignments, scheduledPlan) {
     assignments[i].avg = avgs[i];
   }
 
-  // With the schedule set, populate the filters
-  populateFilters(cca);
-
   // Determine scheduling method
   if(total <= cap) { // < 8 or 6- good!
     scheduleByAvgs(assignments, scheduledPlan, cap, total);
   } else { // Long
     refactorStudy(assignments, scheduledPlan, cap, total);
   }
+
+  // With the schedule set, populate the filters
+  populateFilters(cbc); populateEventNotes();
 
 }
 
@@ -503,6 +530,7 @@ function planRevisionSessions(assignment) {
 function createStudySessionEvent(title, code, start, finish, color, notes) {
   // Create the event
   let temp_ID = code + evt_count;
+  let dateCreated = new Date();
   scheduler.addEvent({
     id: temp_ID,
     start_date: start,
@@ -510,44 +538,43 @@ function createStudySessionEvent(title, code, start, finish, color, notes) {
     text: title,
     code: code,
     color: color,
-    notes: notes // Custom scheduler data
+    notes: notes, // Custom scheduler data
+    created: dateCreated // Custom scheduler data
   });
   evt_count++;
 }
 
-// TODO: Fix showing / hiding events and checking
-function showStudySessionGroup(id, mode) { // 1- Checked / -1- Hide
+// Show / Hide assignments using the filters
+function showStudySessionGroup(cb_val, mode, assignments) { // 1- Checked / -1- Hide ID = Checkbox value
   var evs = scheduler.getEvents(); // Get a collection of all the events
-  var modCode = id.substring(0,5); // Get the module code from the request
+  var modCode = cb_val.substring(0, 5); // Get the module code from the request
+  let tempCode = cb_val.substring(5,6);
 
-  // Loop over each event
-  evs.forEach(function(e) {
-    let type = e.code;
-    let this_id = e.id;
-
-    // if module type is a match with the parameter passe
-    if(mode === 1) {
-      if(type !== modCode) {
-        e.color = "white";
+  if(mode===1) {
+    //alert("Box checked");
+    evs.forEach(function (event) {
+      let tempLetter = event.text.substring(0,1); // Direct match
+      if (event.code === modCode && tempCode === tempLetter) { // If event is CI301, show all CI301
+        //alert(event.code + " " + modCode);
+        let this_name = event.text;
+        // alert(this_name);
+        let i = getAssignmentByName(assignments, this_name);
+        scheduler.getEvent(event.id).color = assignments[i].color;
+        scheduler.updateEvent(event.id);
       }
-    } else if(mode === -1) {
-      if(type === modCode) {
-        e.color = "white";
+    });
+
+  } else if(mode===-1) {
+    //alert("Box unchecked");
+    evs.forEach(function (event) {
+      let tempLetter = event.text.substring(0,1); // Direct match
+      if (event.code === modCode && tempCode === tempLetter) {
+        scheduler.getEvent(event.id).color = "White";
+        scheduler.updateEvent(event.id);
       }
-    }
+    });
+  }
 
-    if(type === modCode) {
-      if(mode === 1) {
-
-      } else {
-        // Find a way to hide events by making them invisible
-        //e.style.visibility = "hidden";
-        e.color = "white"; // TODO: WARNING: STUPID IDEA
-        //scheduler.hideEvent(this_id);
-      }
-
-    }
-  });
 }
 
 /**********************************************************************************************************************/
