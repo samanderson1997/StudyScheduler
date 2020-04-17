@@ -1,14 +1,3 @@
-/**
-  Changes since last Git upload:
-
- - Finished Rescheduling (provisionally, will probably make changes during testing), decrementing quotas and increasing
-  the cap.
-
- - Fixed a number of bugs with scheduling in short days.
-
- - Fixed a number of scheduling bugs in the three modes.
-
- */
 
 /**********************************************************************************************************************/
 /*********************************************** PROCEDURAL CALLS *****************************************************/
@@ -19,12 +8,13 @@ var currentDate = "09-23-2019"; // = new Date(); will set to current date
 var cd = new Date(currentDate); // TODO: Update to the real current date when system is done
 //var currentDate = stringBuilder(cd); // TODO: Replaces occurrences of currentDate with this when the system is using the real date and not a dummy one
 
+// On-screen Calendar Initialisation
 scheduler.config.first_hour = 7;
 scheduler.config.last_hour = 24;
 scheduler.config.collision_limit = 1;
 scheduler.init('scheduler_here', new Date(currentDate), "week"); // Starts at the start of term
 
-const ms_day = (24*(60*60*1000)); // Use to add a day
+const ms_day = (24*(60*60*1000)); // Used to add days
 var evt_count = 0;
 
 // Global variable updated with completed subject names and total hours, then queried by the schedulingReport later on.
@@ -34,26 +24,25 @@ var decrementedAssignments = [];
 
 // Set up the scheduler and on-screen content
 testScheduler(); // For testing
-//configureSetup(); // Checks for GET request with schedule instructions
+//setup(); // Checks for GET request with schedule instructions
 
 /**********************************************************************************************************************/
 /********************************************** SETUP FUNCTIONALITY ***************************************************/
 /**********************************************************************************************************************/
-// First thing to be called, works out the state the of the user's engagement with the UI
-function configureSetup() {
-  // Actual thing - needs to be made a carbon copy of the database
-  var _assignments = [];
+
+// Decide what to do on the opening of this page
+function setup() {
+  // Query attributes
+  const url = new URL(window.location.href);
+  var query = checkGetRequest(url);
 
   testScheduler();
 
-  _assignments = populateAssignmentsArray(); // First operation; create and return a carbon copy of the user's modules db table
   // TODO: Add checks for if no modules found
+  var _assignments = []; // Actual thing - needs to be made a carbon copy of the database
+  _assignments = populateAssignmentsArray(); // First operation; create and return a carbon copy of the user's modules db table
+  var sch_plan = {}; // The test plan to be analysed for daily start times, mode, etc.
 
-  const url = new URL(window.location.href);
-  var query = checkGetRequest(url);
-  var sch_plan = {};
-
-  // TODO: This won't work unless you fill it with something
   if(query) { // They were sent here by the Schedule.html page
     sch_plan = generateSchedulePlan(url);
     //_assignments = populateAssignmentsArray(); // Run checks to make sure that DB entries exist
@@ -106,11 +95,12 @@ function testScheduler() {
     dueDate: "2020-04-20"
   }
   ];
+
   var scheduledPlan = {
-    mode:1, // Balanced mode
+    mode:2, // Balanced mode
     startTime: "09:00",
-    endTime: "17:00",
-    weekends: "on" // If true then will use wknds, if false then ignores Saturday and Sunday
+    endTime: "16:00",
+    weekends: "off" // If true then will use wknds, if false then ignores Saturday and Sunday
   };
 
   var extendedAssignments = [m1={
@@ -159,15 +149,15 @@ function testScheduler() {
     }
     ]; // A large block of stuff to plan to test the refactorStudy assignment();
 
-  work_planner(test_assignments, scheduledPlan); // For testing normal scheduling
-  //work_planner(extendedAssignments, scheduledPlan); // For testing refactored scheduling
+  //work_planner(test_assignments, scheduledPlan); // For testing normal scheduling
+  work_planner(extendedAssignments, scheduledPlan); // For testing refactored scheduling
 }
 
 /**********************************************************************************************************************/
 /********************************************** ON-SCREEN CONTENT *****************************************************/
 /**********************************************************************************************************************/
 
-// Populates a scheduling report where the account icon used to be
+// Populates a scheduling report in the top cell
 function populateSchedulingReport(assignments) {
 
   // Assign the original quota to the completed assignments array so it can be sorted
@@ -179,13 +169,13 @@ function populateSchedulingReport(assignments) {
   // Sort by highest workload
   completedSubjects = sortByWorkload(completedSubjects, 1);
 
+  // Create on-screen information for each subject
   for(let i=0; i<completedSubjects.length; i++) {
     let name = completedSubjects[i].moduleName;
     let pos = getAssignmentByName(assignments, name);
 
-    // Utilisation: util / target hours (e.g. 185 / 200)
+    // Utilisation: util / target hours (e.g. 185hrs / 200hrs)
     let util = completedSubjects[i].utilisation;
-
     let targetHours = assignments[pos].quota;
 
     // Set display name
@@ -211,20 +201,20 @@ function populateSchedulingReport(assignments) {
 
 }
 
-// Populate sidebar filters- takes unaltered assignments as a param meaning it needs to be called in the proper sequence in order to work properly
+// Populate sidebar filters- takes unaltered assignments as a param meaning it needs to be called in the proper sequence in order to work
 function populateFilters(assignments) {
+
   var subjects = []; // Needed to correspond to events
 
-  // Get the names of each module for display labels
+  // Get the names of each module for display labels and shorten them to fit on-screen
   assignments.forEach(function(assignment) {
     let subject = assignment.moduleName.substring(0, 24) + "...";
     subjects.push(subject);
   });
 
-  // Populate the boxes
+  // Populate the cell with corresponding checkboxes
   for(let i=0; i<assignments.length; i++) {
     let temp_ID = assignments[i].moduleCode + assignments[i].moduleName.substring(0,1); // Create a temporary unique identifier
-    let tempColor = assignments[i].color;
 
     // Create the checkbox
     let checkbox = document.createElement("input");
@@ -251,21 +241,22 @@ function populateFilters(assignments) {
     label.appendChild(document.createTextNode(subjects[i]));
     label.classList.add("modLbl");
 
+    // Create the element to be placed on-screen
     var comb = document.createElement("div");
     comb.className = "filter_item";
     comb.appendChild(checkbox);
     comb.appendChild(label);
 
-    // Get the calendar filters
+    // Add the element to the sidebar cell
     var calendarFilters = document.getElementById("calendar_filters");
     calendarFilters.appendChild(comb);
   }
 }
 
-// Get the next deadline and make a countdown to it in the bottom corner
+// Get the next three deadlines and make a countdown to them in the bottom corner
 function populateCountdown(assignments) {
 
-  // If there are no assignments saved
+  // If there are assignments saved
   if(assignments !== []) {
     assignments = sortByDeadline(assignments, -1); // Sort by soonest
     var added = 0; // Used for keeping track
@@ -283,7 +274,7 @@ function populateCountdown(assignments) {
         };
         $("#countdown_section").append('<h6 class="pb_text">' + obj.title + '</h6><div class="countdown_box"><h5 class="cd_text">' + obj.timeLeft + ' days remaining</h5></div>');
         added++;
-        if(added >= 3) { break; }
+        if(added >= 3) { break; } // Break once three have been added
       }
     }
 
@@ -298,6 +289,7 @@ function populateCountdown(assignments) {
 
 // Populate the footer with the event notes from the event clicked.
 function populateEventNotes() {
+
   // jQuery event listener for when an event is clicked.
   $('.dhx_cal_event').on('click', function() {
     scheduler.attachEvent("onClick", function(id,ev){
@@ -309,7 +301,7 @@ function populateEventNotes() {
         $(eventNotes).text(e.notes);
         $(eventNotes).append('<br>Created on ' + date + '</br>');
       }
-      populateFooter(event);
+      populateFooter(event); // Add the event's saved notes to the cell at the bottom of the screen
     });
   });
 }
@@ -318,51 +310,50 @@ function populateEventNotes() {
 /********************************************* MAJOR FUNCTIONALITY ****************************************************/
 /**********************************************************************************************************************/
 
-/* ASSEMBLY OF SCHEDULER PARTS *****************************************************/
-// Main functionality for scheduling with a given plan and list of assignments
+/* ASSEMBLY OF SCHEDULER PARTS ****************************************************************************************/
+
+// Main unit of functionality for scheduling with a given plan and list of assignments
 function work_planner(assignments, scheduledPlan) {
 
-  // Create a carbon copy for mutating for sidebar content
+  // Create a carbon copy of the assignments for sidebar content (to avoid destructive assignment)
   var cbc = [];
   assignments.forEach(function(e) {
     let cci = Object.assign({}, e);
     cbc.push(cci);
   });
-
-  // Populate the on-screen content for the sidebar
-  populateCountdown(cbc);
+  populateCountdown(cbc);  // Populate the on-screen content for the sidebar
 
   // Get the daily work slot, should be 6 or 8 hrs.
   var cap = getHourDifference(scheduledPlan.startTime, scheduledPlan.endTime, currentDate);
 
-  // Work out the daily average for each module
+  // Work out the daily average amount of time required for each module based on its quota and time available
   var avgs = [];
   for(var i=0; i<assignments.length; i++) {
     var av = getDailyAverage(assignments[i], scheduledPlan.weekends);
     avgs.push(av); // For testing the daily total
   }
-  var total = sumArrayValues(avgs); // Add up all the averages
+  let total = sumArrayValues(avgs); // Add up all the averages
 
-  //   Attach the daily averages and hours scheduled attribute to each subject
+  // Attach the daily averages and hours scheduled attribute to each subject
   for(let i=0; i<assignments.length; i++) {
     assignments[i].avg = avgs[i];
     assignments[i].hoursScheduled = 0; // Initialise value in the first iteration
-    // TEST FOR KEEPING TRACK OF PLANNED HOURS: assignments[i].hoursPlanned = 0;
   }
-  //alert(total + " " + cap);
 
   // Determine scheduling method
-  if(total < (cap-1)) { // < 8 or 6- good!
+  if(total < (cap-1)) { // all avgs fit into a single day - good, easy to fulfill
     scheduleByAvgs(assignments, scheduledPlan, cap, total);
-  } else { // Long
+  } else { // Subjects need refactoring in order to fit and make best use of time
     refactorStudy(assignments, scheduledPlan, cap, total);
   }
 
-  // With the schedule set, populate the filters
+  // THE SCHEDULE HAS NOW BEEN GENERATED
+
+  // With the schedule complete, populate the filters
   populateFilters(cbc);
   populateEventNotes();
 
-  // Use the decremented quotas for the side bar if a decrement took place. Use the standard carbon copy if not
+  // Use the decremented quotas for the side bar if a decrement took place. Use the standard carbon copy if not.
   if(decrementedQuotas) {
     populateSchedulingReport(decrementedAssignments);
   } else {
@@ -371,28 +362,34 @@ function work_planner(assignments, scheduledPlan) {
 
 }
 
-// Get the plan of the schedule from the GET request contained in the URL
+// Get the plan attributes for the schedule from the GET request contained in the URL (if there is one)
 function generateSchedulePlan(url) {
-  var plan = {};
+  let plan = {};
+
   plan.startTime = url.searchParams.get("startTime");
   plan.endTime = url.searchParams.get("endTime");
   plan.weekends = url.searchParams.get("weekends");
   plan.mode = url.searchParams.get("balance");
+
   return plan;
 }
 
-/* SCHEDULING BY WORKLOAD **********************************************************/
-// If all the daily averages are less than the cap then good, this is easy.
+/* SCHEDULING BY WORKLOAD *********************************************************************************************/
+
+// If all the daily averages are less than the cap then good, it will be easy to plan all the desired hours
 function scheduleByAvgs(assignments, scheduleDetails, cap, total) {
-  const method_ID = 1;
-  var date = new Date(currentDate + " " + scheduleDetails.startTime);
-  var quotasComplete = false;
+  const method_ID = 1; // Will be used by the break function later to determine how to add a break
 
-  // Sort into a reasonable starting order
-  assignments = sortByDeadline(assignments, 1);
+  // Create the date object
+  var date = new Date(currentDate + " " + scheduleDetails.startTime); // TODO: Change to cd date object when live
 
-  // While there's still work to be done
+  assignments = sortByDeadline(assignments, 1); // Sort into a reasonable starting order
+  var quotasComplete = false; // For keeping track of whether there is work still to be done
+
+  // Runs while there are still subjects with hours left to plan
   while (quotasComplete === false) {
+
+    // Run a batch job which schedules daily study for all the subjects, returns the date after processing.
     let dst = scheduleBatchSubjects(date, assignments, cap, total, scheduleDetails, method_ID); // Decrements quotas internally
 
     // Fix issues with daylight savings offset
@@ -402,45 +399,28 @@ function scheduleByAvgs(assignments, scheduleDetails, cap, total) {
 
     // Check to see if there's work to be done and reshuffle the array for variety
     quotasComplete = checkAllQuotas(assignments);
-    assignments.reverse();
-    //assignments = randomise(assignments); // Randomise the array
+    assignments.reverse(); // Reverse the order for variety
   }
   alert("Scheduling complete.");
 }
 
-// If daily averages exceed the daily cap, then ah whatever we'll come back to this.
+// If daily averages combined exceed the daily cap, then study needs to be refactored into the calendar.
 function refactorStudy(assignments, plan, cap, total) {
-  const method_ID = 2;
+  const method_ID = 2; // For later.
 
-  var date = new Date(currentDate + " " + plan.startTime); // Create a rolling date
+  var date = new Date(currentDate + " " + plan.startTime); // Create a rolling date object
 
-  // For saving time writing routing if statements
-  function route(mode) {
-    if(mode === 1) {
-      schedule_assignmentMode(assignments, plan, date, cap, total, method_ID);
-    } else if(mode === 2) {
-      schedule_balancedMode(assignments, plan, date, cap, total, method_ID);
-    } else if(mode === 3) {
-      schedule_revisionMode(assignments, plan, date, cap, total, method_ID);
-    }
-  }
-
-  // Feasibility checks
+  // Check the feasibility of the entire workload
   let feasible = determineOverallFeasibility(assignments, cap, plan);
 
   if(feasible) {
-    route(plan.mode);
-
+    route(plan.mode); // No workload easing or extending needs to occur
   } else {
-    // Work out the best course of action to minimise impact on hours
-    let overallWorkload = getOverallWorkload(assignments);
-    let totalHrs = getTotalHours(assignments, plan, cap);
 
-    // TODO: GIVE THEM A CHOICE OF WHAT TO DO
+    // Get the user's choice on how they want to improve scheduling results
     var choice = prompt("1- Increase Cap | 2- Decrement Quotas | 3- Both | 4- Proceed Anyway"); // Get the best course of action
 
     if(choice == 1) {
-      alert("Hi");
       plan = reschedule_increaseCap(assignments, plan, cap); // Increase the daily cap
       route(plan.mode);
 
@@ -453,7 +433,6 @@ function refactorStudy(assignments, plan, cap, total) {
       assignments = reschedule_decrementQuotas(assignments, plan, cap);
       route(plan.mode);
 
-      // TODO: Make this into "proceed with lower quotas" and only leave two options, give the user the choice
     } else if (choice == 4) {
       assignments = sortByWorkload(assignments, 1);
       route(plan.mode);
@@ -461,44 +440,52 @@ function refactorStudy(assignments, plan, cap, total) {
 
   }
 
+  // For saving time writing routing if statements
+  function route(mode) {
+    if(mode === 1) {
+      schedule_assignmentMode(assignments, plan, date, cap, total, method_ID);
+    } else if(mode === 2) {
+      schedule_balancedMode(assignments, plan, date, cap, total, method_ID);
+    } else if(mode === 3) {
+      schedule_revisionMode(assignments, plan, date, cap, total, method_ID);
+    }
+  }
+
 }
 
-/* MAIN SCHEDULING FUNCTIONS ***********************************************************/
-// Plan subjects and breaks for the day
+/* MAIN SCHEDULING FUNCTIONS ******************************************************************************************/
+
+// Batch Scheduler- Plan subjects and breaks for a given day
 function scheduleBatchSubjects(date, assignments, cap, total, plan, id) {
+
+  // Temp vars for creating the calendar entry on-screen
   var sessionLength, tempName, tempCode, tempColour;
 
   // Set exam / deadline reminders on the day
   for(var i=0; i<assignments.length; i++) { // Looping over each subject
 
-    // Check to see if this is an exam, that will need backwards processing
-    if(assignments[i].type !== "done") { // Exam, plan backwards
+    // Add a reminder (either an exam or coursework reminder depending on type) for the deadline of the subject
+    if(assignments[i].type !== "done") {
       setDeadlineReminder(assignments[i], plan);
-      assignments[i].type = "done";
+      assignments[i].type = "done"; // Set so this only occurs for each subject once
     }
 
-    // Check if the user wants to schedule study on weekend days
+    // Check if the user wants to schedule study on weekend days, and skip them if not
     if (plan.weekends === "off") { date = skipWeekendDays(date, plan); }
 
-    //if(date.getHours() < plan.startTime.substring(0, 2)) {
-      //alert(date.getHours() + " " + plan.startTime.substring(0,2));
-      //incrementDay(date, plan);
-   // }
-
-    // TESTED: WORKING: Get the display attributes
+    // Get the display attributes for the calendar event
     tempName = assignments[i].moduleName;
     tempCode = assignments[i].moduleCode;
     tempColour = assignments[i].color;
     sessionLength = assignments[i].avg; // It'll be something like 1hr - 3hr
 
-    // For when a shorter subject might take the place of a longer one at the end of the day
-    var shorterSubject = false;
+    var shorterSubject = false; // For when a shorter subject might take the place of a longer one at the end of the day
 
     // Not necessary if scheduling by average, so only fires if one of them got here via the refactoring method
-    if(id === 2) { // Only if it can't sequentially schedule within the given time
+    if(id === 2) {
+      let hrsLeft = getTimeRemainingInDay(date, plan); // Get the hours left in the day
 
       // Check to make sure the session will not overrun the day, and switch to something shorter if so
-      let hrsLeft = getTimeRemainingInDay(date, plan);
       if(hrsLeft < sessionLength) {
         function findShorterSession(assignments) {
           for(let x=0; x<assignments.length; x++) {
@@ -508,19 +495,21 @@ function scheduleBatchSubjects(date, assignments, cap, total, plan, id) {
           }
           return undefined; // If no match found
         }
-        var x = findShorterSession(assignments);
+        var x = findShorterSession(assignments); // Find a shorter session to fill the remaining hours
 
+        // If there is no shorter session to plan
         if(isNaN(x)) {
-          incrementDay(date, plan);
-          if(plan.weekends === "off") { date = skipWeekendDays(date, plan); }
-        } else {
+          incrementDay(date, plan); // Move to the next day
+          if(plan.weekends === "off") { date = skipWeekendDays(date, plan); } // Skip weekend days called here to stop overlap on a Friday
+
+        } else { // Something shorter can be planned, set new display values
           shorterSubject = true;
           tempName = assignments[x].moduleName;
           tempCode = assignments[x].moduleCode;
           tempColour = assignments[x].color;
           sessionLength = assignments[x].avg;
         }
-      } // Finds another subject to fill time with
+      }
 
       // Check if the finish time is going to exceed the daily limit
       let provisionalDate = new Date(date.getTime() + (sessionLength * (60*60*1000))); // + sessionLength in hrs
@@ -534,14 +523,12 @@ function scheduleBatchSubjects(date, assignments, cap, total, plan, id) {
 
     // Splices any subject which has passed the due date and expired.
     let this_deadline = new Date(assignments[i].dueDate);
+
+    // Passed the due date, expired
     if(date.getTime() > this_deadline.getTime()) {
-      // Passed the due date, expired
-      var failedModule = {};
-      // TEST FOR KEEPING TRACK OF PLANNED HOURS: alert(assignments[i].hoursPlanned);
+      var failedModule = {}; // Will be added to the finished modules list for the scheduling report on-screen
       let name = assignments[i].moduleName;
       let scheduled = assignments[i].hoursScheduled;
-
-      //alert("Failed to schedule all hours for " + name);
 
       // Keep a global record of the completed subjects
       failedModule = {
@@ -549,41 +536,41 @@ function scheduleBatchSubjects(date, assignments, cap, total, plan, id) {
         utilisation: scheduled,
         success: false
       };
+
       completedSubjects.push(failedModule);
-      assignments.splice(i, 1);
-
-      continue; // to the next iteration/subject
+      assignments.splice(i, 1); // Remove the expired subject
+      continue; // to the next iteration/subject, don't proceed any further.
     }
-
-    var exactStartTime = stringBuilder(date); // Turn the start time into a calendar-readable format
 
     // Increment the rolling date to determine the finish time
-    var nextDate = new Date(date.getTime() + (sessionLength * (60 * 60 * 1000))); // + x number of hours
-    var exactFinishTime = stringBuilder(nextDate);
+    var exactStartTime = stringBuilder(date); // Turns the start time into a calendar-readable format
+    var nextDate = new Date(date.getTime() + (sessionLength * (60 * 60 * 1000))); // + x number of hours for session length
+    var exactFinishTime = stringBuilder(nextDate); // Turns the finish time into a calendar-readable format
+
+    // Create some metadata to display on-screen for the subject due to be planned and create the physical event
     let notes = "Automatically generated study session for " + tempCode + ": " + tempName;
+    createStudySessionEvent(tempName, tempCode, exactStartTime, exactFinishTime, tempColour, notes); // Add to calendar
 
-    createStudySessionEvent(tempName, tempCode, exactStartTime, exactFinishTime, tempColour, notes);
-
+    // If we had to use a shorter subject, we need to subtract from that, not the original
     if(shorterSubject) {
       assignments[x].quota -= sessionLength; // Decrement the quota
-      assignments[x].hoursScheduled += sessionLength;     // Hour track keeper
+      assignments[x].hoursScheduled += sessionLength;    // Hour track keeper
     } else {
       assignments[i].quota -= sessionLength; // Decrement the quota
-      assignments[i].hoursScheduled += sessionLength;     // Hour track keeper
+      assignments[i].hoursScheduled += sessionLength;    // Hour track keeper
     }
 
-    //alert(assignments[i].hoursScheduled);
-
-    // Date Operations: Update the time then add a proportional break relative to the workload
+    // Update the time then add a proportional break relative to the workload
     date = nextDate; // Update the time after the session has been added
     let breakLength = addBreak(cap, total, assignments.length, plan, id); // Add a break between study sessions
     date = new Date(date.getTime() + (60 * 60 * 1000) * breakLength); // + x number of break hours
 
     // Check to see if the current assignment has any work left to plan, and then remove it if not
     var done = checkQuota(assignments[i].quota);
+
+    // The subject has no hours left to plan, we can move it into the completed subjects record
     if (done) {
       var completedModule = {};
-      // TEST FOR KEEPING TRACK OF PLANNED HOURS: alert(assignments[i].hoursPlanned);
       let name = assignments[i].moduleName;
       let scheduled = assignments[i].hoursScheduled;
 
@@ -594,87 +581,88 @@ function scheduleBatchSubjects(date, assignments, cap, total, plan, id) {
         success: true
       };
       completedSubjects.push(completedModule);
-
-      assignments.splice(i, 1);
+      assignments.splice(i, 1); // Remove the subject from the workload
     }
   }
-  return date;
+  return date; // Return the date at the end of the day
 }
 
-// Schedule Mode 1: Assignment mode (long blocks, extended study sessions of subjects
+// Schedule Mode 1: Assignment mode (longer blocks of study, extended study sessions
 function schedule_assignmentMode(assignments, plan, date, cap, total, id) {
-  let quotasComp = false;
 
-  // Double up all averages for assignment mode
+  let quotasComp = false; // For keeping track of outstanding work
+
+  // Double up all averages for assignment mode to make the blocks longeer
   assignments.forEach(function(e) {
     e.avg = e.avg * 2;
     if(e.avg >= cap / 2) {
-      e.avg = ((cap/2) -0.5); // Adding a decrement to ensure the user has free time during the day if one of their subjects exceeds 50% of their day
+      e.avg = ((cap/2) -0.5); // Decrement to ensure the user has free time during the day if one of their subjects exceeds 50% of their day
     }
   });
 
-  // Schedule until everything is done
   assignments = sortByDeadline(assignments, -1); // Sort the assignments according to the soonest
 
+  // Runs while there's still hours left to plan
   while(quotasComp === false) {
     date = scheduleBatchSubjects(date, assignments, cap, total, plan, id);
     if(date.getDay() % 4 !== 0) {
       assignments = sortByWorkload(assignments, 1);
-      //assignments.reverse();
     } else{
       assignments = sortByDeadline(assignments, -1);
     }
     quotasComp = checkAllQuotas(assignments);
   }
+
   alert("Scheduling finished");
 }
 
 // Schedule Mode 2: Balanced (long and short blocks, whatever works really)
 function schedule_balancedMode(assignments, plan, date, cap, total, id) {
-  let quotasComplete = false;
-  assignments = sortByWorkload(assignments, 1); // Sort the assignments so the highest workload is at the front (Mode 1 = high-low, Mode -1 = low-high)
-  // Swap the longest session with the second longest or it might cause unnecessary 3-hour slot skips in the day
+
+  let quotasComplete = false; // For keeping track of outstanding work to be done
+  assignments = sortByWorkload(assignments, 1); // Sort the assignments so the highest workload is at the front
+
+  // Swap the longest session with the second longest or it might cause unnecessary 3-hour slot skips on the first day
   let t1 = assignments[1];
   assignments[1] = assignments[0];
   assignments[0] = t1;
 
-  // Schedule the sorted array
+  // Schedule while there's still work to be done
   while(quotasComplete === false) {
-    date = scheduleBatchSubjects(date, assignments, cap, total, plan, id);
-    //assignments = sortByDailyAverage(assignments, 1); // Use this instead of randomise or reverse for better utilisation
+    date = scheduleBatchSubjects(date, assignments, cap, total, plan, id); // Batch job
 
-    if(date.getDay() % 2 !== 0) {
+    // For variety and efficiency
+    if(date.getDay() % 4 !== 0) {
       assignments.reverse();
     } else{
       assignments = sortByDeadline(assignments, 1);
     }
     quotasComplete = checkAllQuotas(assignments);
   }
+
   alert("Scheduling Finished.");
 }
 
 // Schedule Mode 3: Revision mode (short blocks, never keep anything too long, could just cycle through 1hr sessions)
 function schedule_revisionMode(assignments, plan, date, cap, total, id) {
-  let assignments_done = false;
 
-  //assignments = randomise(assignments);
-  assignments = sortByDeadline(assignments, -1);
+  let assignments_done = false; // Keeping track of outstanding work
+
+  // Revision mode requires short bursts of subjects so reduces the session length, but not if their deadline is soon approaching
+  assignments = sortByDeadline(assignments, -1); // Get soonest
   assignments.forEach(function(e) {
-    //alert(getDaysUntilDeadline(e.dueDate, date));
     if(getDaysUntilDeadline(e.dueDate, date) > 100) {
-        e.avg = 1; // Setting the session length for all subjects
+        e.avg = 1; // Setting a 1hr session length
     }
-    });
+  });
 
-  assignments = sortByDeadline(assignments, -1);
+  // While there are hours still left to plan
   while(assignments_done === false) {
-    date = scheduleBatchSubjects(date, assignments, cap, total, plan, id);
+    date = scheduleBatchSubjects(date, assignments, cap, total, plan, id); // Batch job
     if(date.getDay() % 2 !== 0) {
       assignments = sortByDeadline(assignments, 1);
     } else {
       assignments = sortByWorkload(assignments, -1);
-      //assignments = sortByDailyAverage(assignments,1); // The most workload
-      //assignments.reverse();
     }
     assignments_done = checkAllQuotas(assignments);
   }
@@ -684,13 +672,17 @@ function schedule_revisionMode(assignments, plan, date, cap, total, id) {
 }
 
 
-/* RESCHEDULING *****************************************************************/
+/* RESCHEDULING *******************************************************************************************************/
 
 // Increase the daily number of hours the scheduler plans across to allow more hours in the day to complete assignments
 function reschedule_increaseCap(assignments, plan, cap) {
+
+  // Get the start and finish time from the plan
   let startTimeHrs = plan.startTime.substring(0,2);
   let finishTimeHrs = plan.endTime.substring(0,2);
-  startTimeHrs--; finishTimeHrs++;
+
+  // Increment the daily start and finish time by an hour
+   startTimeHrs--; finishTimeHrs++;
 
   // Add the revised times to the plan
   plan = amendPlanTimes(startTimeHrs, finishTimeHrs);
@@ -706,12 +698,15 @@ function reschedule_increaseCap(assignments, plan, cap) {
   return plan;
 }
 
-// If the user is trying to cram too much work into not enough time, one option they can choose is to decrement the quotas
+// If the user is trying to cram too much work into not enough time,  they can choose to decrement the quotas
 function reschedule_decrementQuotas(assignments, plan, cap) {
 
+  // Get relevant information
   let lastDeadLine = getFurthestDeadline(assignments); //alert(lastDeadLine.moduleName);
   let totalHrs = ((getDaysUntilDeadline(lastDeadLine.dueDate, cd)) * cap); //alert(totalHrs);
-  let pcInc = 0.05;
+
+  // New values
+  let pcInc = 0.05; // A marginal percentage decrease to the deadlines
   let newQuotas = [];
   let balanceFound = false;
 
@@ -722,7 +717,7 @@ function reschedule_decrementQuotas(assignments, plan, cap) {
       newQuotas.push(currentQuota * (1-pcInc)); // 0.95, 0.9, 0.85 of original quotas, etc...
     });
 
-    let newWorkload = sumArrayValues(newQuotas); //alert(newWorkload);
+    let newWorkload = sumArrayValues(newQuotas);
     if(newWorkload < (totalHrs*0.8)) {
       balanceFound = true;
     } else {
@@ -730,7 +725,7 @@ function reschedule_decrementQuotas(assignments, plan, cap) {
     }
   }
 
-  // Assign the new quotas
+  // Assign the new quotas once the balance has been found
   for(let i=0; i<assignments.length; i++) {
     assignments[i].quota = newQuotas[i];
   }
@@ -742,32 +737,38 @@ function reschedule_decrementQuotas(assignments, plan, cap) {
   });
   decrementedQuotas = true;
 
+  // Sort and add priority to the soonest deadline (which might be overlooked)
   assignments = sortByDeadline(assignments, -1);
-  assignments[0].avg += 1;
+  assignments[0].avg += 1; // Add an hour to help schedule more time
 
   return assignments;
 }
 
-/* ADDING CALENDAR EVENTS *****************************************************************/
+/* ADDING CALENDAR EVENTS *********************************************************************************************/
+
 // Set overhead reminders for exams and deadlines for each module
 function setDeadlineReminder(assignment, plan) {
-  // Set reminder metrics
-  const hr = 60*60*1000; // millisecond hour to save typing
+
+  // Set reminder time attributes
   let e_date = new Date(assignment.dueDate + " " + "00:00");
   let end_date = new Date(e_date.getTime() + ms_day);
 
+  // Set display attributes for the calendar event
   let code, name, start, finish, colour, notes;
   code = assignment.moduleCode; // Both the same
-  start = stringBuilder(e_date); //stringBuilder(examDate);
-  finish = stringBuilder(end_date); //stringBuilder(ef);
 
-  // Determines what kind of reminder to add, whether it's A or E
+  // Turn dates into calendar-readable format
+  start = stringBuilder(e_date);
+  finish = stringBuilder(end_date);
+
+  // Determines what kind of reminder to add, whether it's Assignment [A] or Exam [E]
   if(assignment.type === "E") {
     // Exam event details
     name = "EXAM: " + assignment.moduleCode;
     colour = "Red";
     notes = "Examination for " + code + ": " + assignment.moduleName;
   } else if(assignment.type === "A") {
+    // Deadline event details
     colour = "Black";
     name = "DEADLINE: " + assignment.moduleCode;
     notes = "Examination for " + code + ": " + assignment.moduleName;
@@ -777,14 +778,13 @@ function setDeadlineReminder(assignment, plan) {
   createStudySessionEvent(name, code, start, finish, colour, notes);
 }
 
-// Create a study session. Not necessarily required to be its own function but helpful if it's reusable.
+// Create a study session event on the calendar with given parameters
 function createStudySessionEvent(title, code, start, finish, color, notes) {
-  // Create the event
 
+  // Calendar ID and reference
   let temp_ID = code + evt_count;
   let dateCreated = new Date();
 
-  //alert(proposedSession.startTime + " " + proposedSession.finishTime);
     scheduler.addEvent({
       id: temp_ID,
       start_date: start,
@@ -795,36 +795,42 @@ function createStudySessionEvent(title, code, start, finish, color, notes) {
       notes: notes, // Custom scheduler data
       created: dateCreated // Custom scheduler data
     });
-    evt_count++;
+
+    evt_count++; // Keep counting the number of events created to generate a unique ID for each one
 
 }
 
 // Show / Hide assignments using the filters
-function showStudySessionGroup(cb_val, mode, assignments) { // 1- Checked / -1- Hide ID = Checkbox value
-  var evs = scheduler.getEvents(); // Get a collection of all the events
+function showStudySessionGroup(cb_val, mode, assignments) {
+
+  // Get a collection of all the events in the calendar
+  var evs = scheduler.getEvents();
+
+  // Get the code and first unique letter to differentiate between assignments with the same course code
   var modCode = cb_val.substring(0, 5); // Get the module code from the request
   let tempCode = cb_val.substring(5,6);
 
+  // Box ticked- Show all
   if(mode===1) {
-    //alert("Box checked");
+
+    // Loop through each event looking for matches on the code for the filter that was clicked
     evs.forEach(function (event) {
       let tempLetter = event.text.substring(0,1); // Direct match
-      if (event.code === modCode && tempCode === tempLetter) { // If event is CI301, show all CI301
-        //alert(event.code + " " + modCode);
+
+      // If event moduleCode matches, show event
+      if (event.code === modCode && tempCode === tempLetter) {
         let this_name = event.text;
-        // alert(this_name);
         let i = getAssignmentByName(assignments, this_name);
-        scheduler.getEvent(event.id).color = assignments[i].color;
+        scheduler.getEvent(event.id).color = assignments[i].color; // Restore colour if previously hidden
         scheduler.updateEvent(event.id);
       }
     });
 
-  } else if(mode===-1) {
-    //alert("Box unchecked");
+  } else if(mode===-1) { // Box unticked, hide all
     evs.forEach(function (event) {
       let tempLetter = event.text.substring(0,1); // Direct match
       if (event.code === modCode && tempCode === tempLetter) {
-        scheduler.getEvent(event.id).color = "White";
+        scheduler.getEvent(event.id).color = "White"; // Turn white to simulate hiding but still block out the space
         scheduler.updateEvent(event.id);
       }
     });
@@ -832,12 +838,12 @@ function showStudySessionGroup(cb_val, mode, assignments) { // 1- Checked / -1- 
 
 }
 
-
 /**********************************************************************************************************************/
-/********************************************* MINOR FUNCTIONALITY ****************************************************/
+/************************************************ MINOR FUNCTIONALITY *************************************************/
 /**********************************************************************************************************************/
 
-/* SORTING **********************************************************************/
+/* SORTING ************************************************************************************************************/
+
 // Sort the assignments so that the highest workload subjects are first in the queue
 function sortByWorkload(assignments, mode) { // 1- Highest-Lowest / -1- Lowest-Highest
 
@@ -870,17 +876,17 @@ function sortByDailyAverage(assignments, mode) { // 1- Highest-Lowest / -1- Lowe
     }
     return comp;
   }
-  assignments.sort(compare);
+  assignments.sort(compare); // Sort
   return assignments;
 }
 
-// Sort by soonest deadline and furthest deadline (Mode 1- Soonest - Furthest / -1- Furthest - Soonest
+// Sort by soonest deadline and furthest deadline (Mode 1- Furthest - Soonest / -1- Soonest - Furthest
 function sortByDeadline(assignments, mode) {
   function compare(a,b) {
     let d1 = new Date(a.dueDate);
     let d2 = new Date(b.dueDate);
     let dComp;
-    //alert(d1 + "\n" + d2);
+
     if(d1.getTime() > d2.getTime()) {
       dComp = mode * -1;
     } else if(d1.getTime() < d2.getTime()) {
@@ -903,43 +909,15 @@ function randomise(arr) {
   return arr;
 }
 
-/* GETTERS *********************************************************************/
-// Get information about a particular subject by one of its attributes
-// TODO: Assumes that two assignments don't have the same name
+/* GETTERS ************************************************************************************************************/
+
+// Get information about a particular subject by its name, assumes that two assignments don't have the same name
 function getAssignmentByName(assignments, param) {
-  for(var i=0; i<assignments.length; i++) {
+  for(let i=0; i<assignments.length; i++) {
     if(assignments[i].moduleName === param) {
-      return i;
+      return i; // Return the index position
     }
   }
-}
-
-// Get highest workload
-function getHighestWorkload(assignments) {
-  let highestQuota = 0;
-  let subject;
-
-  for(var i=0; i<assignments.length; i++) {
-    if(assignments[i].quota > highestQuota) {
-      subject = assignments[i];
-      highestQuota = assignments[i].quota;
-    }
-  }
-  return subject;
-}
-
-// TODO: Got to check this to see if it has problems handling just one subject
-function getLowestWorkload(assignments) {
-  let lowestQuota = assignments[0].quota;
-  let subject;
-
-  for(var i=0; i<assignments.length; i++) {
-    if(assignments[i].quota <= lowestQuota) {
-      subject = assignments[i];
-      lowestQuota = assignments[i].quota;
-    }
-  }
-  return subject;
 }
 
 // Get the latest / earliest deadlines and return
@@ -947,6 +925,7 @@ function getFurthestDeadline(assignments) {
   let furthestDeadline = new Date(assignments[0].dueDate);
   let subject;
 
+  // Comparison loop through all subjects to test for the highest date
   let currentDeadline = new Date();
   for(var i=1; i<assignments.length; i++) {
     currentDeadline = new Date(assignments[i].dueDate);
@@ -955,22 +934,8 @@ function getFurthestDeadline(assignments) {
       furthestDeadline = currentDeadline;
     }
   }
-  return subject;
-}
 
-// TODO: Got to check this to see if it has problems handling just one subject
-function getSoonestDeadline(assignments) {
-  let soonestDeadline = new Date(assignments[0].dueDate);
-  let subject;
-
-  for(let i=1; i<assignments.length; i++) {
-    let currentDeadline = new Date(assignments[i].dueDate);
-    if(currentDeadline.getTime() <= soonestDeadline.getTime()) {
-      subject = assignments[i];
-      soonestDeadline = currentDeadline;
-    }
-  }
-  return subject;
+  return subject; // Returns the whole object (inefficient)
 }
 
 // Get the daily average workload in hours for a particular module and round up
@@ -979,6 +944,7 @@ function getDailyAverage(module, weekends) {
   var d = module.dueDate;
   var daysUntil = getDaysUntilDeadline(d, cd);
 
+  // If the user has chosen not to plan study on weekends
   if(weekends === "off") {
     let weekdaysUntil = ((daysUntil / 7) * 5);
     return (Math.ceil(req_hours / weekdaysUntil));
@@ -990,26 +956,25 @@ function getDailyAverage(module, weekends) {
 
 // Get the days until the deadline from the current date (getCurrentDay)
 function getDaysUntilDeadline(deadline, currentDate) {
-  //alert(currentDate);
   let dl = new Date(deadline);
   let timeDiff = dl.getTime() - currentDate.getTime();
   return timeDiff / (1000*60*60*24);
 }
 
-/* FEASIBILITY *****************************************************************/
-// Determine the feasibility of all daily avgs vs daily cap (8)
+
+/* FEASIBILITY ********************************************************************************************************/
+
+// Determine the feasibility of all daily avgs vs daily cap
 function determineOverallFeasibility(assignments, cap, plan) {
 
+  // Get relevant information
   let overallWorkload = getOverallWorkload(assignments);
-  //alert(overallWorkload);
   let totalHrs = getTotalHours(assignments, plan, cap);
-  //alert(totalHrs);
-  //alert(totalHrs + " " + overallWorkload);
 
-  return overallWorkload <= (totalHrs * 0.85); // Reduce by 20% because need to account time for breaks
+  return overallWorkload <= (totalHrs * 0.85); // Reduce by 15% because we need to account time for breaks
 }
 
-// Work out the overall workload
+// Work out the overall workload, in hours, of all the subjects in the assignments array
 function getOverallWorkload(assignments) {
   let overallWorkload = 0;
   for(let i=0; i<assignments.length; i++) {
@@ -1020,6 +985,8 @@ function getOverallWorkload(assignments) {
 
 // Work out the time until the last deadline
 function getTotalHours(assignments, plan, cap) {
+
+  // Get relevant information
   let lastDeadline = getFurthestDeadline(assignments);
   let days = getDaysUntilDeadline(lastDeadline.dueDate, cd);
 
@@ -1034,14 +1001,15 @@ function getTotalHours(assignments, plan, cap) {
 }
 
 
-/* CHECKS **********************************************************************/
-// Check to see if all the quotas are 0
+/* CHECKS *************************************************************************************************************/
+
+// Check to see if a single quota is 0
 function checkQuota(quota) {
   return quota <= 0;
 }
 
+// Check to see if any of the subjects still have hours left to plan
 function checkAllQuotas(assignments) {
-  // Operate on each subject
   if(assignments.length === 0) {
     return true;
   } else {
@@ -1054,37 +1022,31 @@ function checkAllQuotas(assignments) {
   }
 }
 
-/* TIME OPERATIONS *************************************************************/
-// Reset the day using the resetDate method if the time has exceeded the daily threshold
+
+/* TIME OPERATIONS ****************************************************************************************************/
+
+// Increment the day using the resetDate method if the time has exceeded the daily threshold
 function incrementDay(date, plan) {
   let d = new Date(date.getTime() + ms_day);  // + 24 hours
-  //alert(d);
   let str = resetDate(d);
-  //alert(str);
-  let nextDate = new Date(str + " " + plan.startTime); // Use the reset day
-  return nextDate;
+  return new Date(str + " " + plan.startTime); // Use the reset day + the plan startTime
 }
 
 // If the weekends setting is marked as "off" on the schedule plan, check the day and skip to Monday if it's a weekend day
 function skipWeekendDays(date, plan) {
-  if(date.getDay() === 6) {
+  if(date.getDay() === 6) { // Saturday, skip 2 days
     date = incrementDay(date, plan);
     date = incrementDay(date, plan);
-  } else if(date.getDay() === 0) {
+  } else if(date.getDay() === 0) { // Sunday, skip 1 day
     date = incrementDay(date, plan);
   }
   return date;
 }
 
-// Determine the length of proportional breaks based on the daily workload
+// Determine the length of breaks based on the workload and settings used
 function addBreak(cap, total, moduleCount, plan, id) {
 
-  // This is a set of scenario-specific rules pertaining to each mode and workload. No real methodology as such
-  //alert(total + " " + cap);
-
-  // TODO: Extend to put breaks between 3hr sessions of the same subject at the end
-  // todo: If modulecount = 2 then 1hr break (because each session should be (cap/2)-0.5hr if moduleCount = 2
-
+  // If there's only a couple of modules left in the array
   if(moduleCount === 1 || moduleCount === 2) {
     return 1;
   } else if(moduleCount === 3) {
@@ -1096,10 +1058,10 @@ function addBreak(cap, total, moduleCount, plan, id) {
         let freeHrs = cap - total;
         return freeHrs / moduleCount;
 
-      case 2: // RefactorStudy
+      case 2: // RefactorStudy - Needs specific rules to follow
         switch(plan.mode) {
           case 1: // Assignment Mode
-            return 0.5; // Anything less and it won't be added
+            return 0.5; // Anything less and it won't be added before the day increments
 
           case 2: // Balanced mode
             if(plan.weekends === "off") {
@@ -1114,13 +1076,9 @@ function addBreak(cap, total, moduleCount, plan, id) {
             } else {
               return 0.5; // Revision Mode
             }
-
         }
     }
   }
-
-
-
 }
 
 // Returns the amount of hours left in a day until the daily finish time
@@ -1136,34 +1094,38 @@ function getHourDifference(t1, t2, date) {
   return timeStop - timeStart;
 }
 
-/* ARITHMETIC ******************************************************************/
+/* ARITHMETIC *********************************************************************************************************/
+
 // Sum the values in a given array
 function sumArrayValues(arr) {
-  var sum = arr.reduce(function(a, b) {
+  return arr.reduce(function (a, b) {
     return a + b;
   }, 0);
-  return sum;
 }
 
-/* FORMATTING ******************************************************************/
-// Build a string in the format the scheduler can use rather than the BS JS format
-function stringBuilder(date) {
-  var string, day, month, year, time, hrs, sec;
+/* FORMATTING *********************************************************************************************************/
 
+// Build a string in the format the scheduler can use rather than the JS format
+function stringBuilder(date) {
+  let string, day, month, year, time, hrs, sec;
+
+  // Get the day and month
   day = date.getDate(); // Gets day as a number
   month = date.getMonth() + 1; // Gets the month
   if(month < 10) { month = "0" + month; }
 
   year = date.getFullYear(); // Gets year in YYYY format
 
+  // Get the time
   hrs = date.getHours();
   sec = date.getSeconds();
 
+  // Add a zero before for formatting
   if(hrs < 10) { hrs = "0" + hrs; }
   if(sec < 10) { sec = "0" + sec; }
+  time = hrs + ":" + sec; // Set the format
 
-  time = hrs + ":" + sec;
-
+  // Bind the new format for the calendar together and return it
   string = day + "-" + month + "-" + year + " " + time;
   return string;
 }
@@ -1174,20 +1136,20 @@ function resetDate(d) {
   yy = d.getFullYear();
   mm = d.getMonth() + 1;
   dd = d.getDate();
-  let str = yy + "-" + mm + "-" + dd;
-  return str;
+  return yy + "-" + mm + "-" + dd;
 }
 
 /**********************************************************************************************************************/
-/*********************************** GET / POPULATE STUFF FROM THE DATABASE *******************************************/
+/*************************************** GET / POPULATE STUFF FROM THE DATABASE ***************************************/
 /**********************************************************************************************************************/
+//////////////////////////////// NOTE: The following functions are out of scope for CI316 //////////////////////////////
 
 // Fill the assignments array from the database
 function populateAssignmentsArray() {
   var assignments = [];
   let longString;
 
-  // db.ajax whatever
+  // TODO: .ajax whatever
 
   // Populate the assignments array from the parsed string returned from the DB
   var obj = JSON.parse(longString);
